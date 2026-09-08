@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,6 +24,10 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
+# Render provides PORT automatically.
+PORT = int(os.getenv("PORT", "10000"))
+HOST = "0.0.0.0"
+
 DATA_FILE = Path("bot_data.json")
 USERS_FILE = Path("users.json")
 
@@ -34,6 +40,62 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# RENDER HEALTH SERVER
+# ============================================================
+
+class HealthHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        if self.path in ("/", "/health", "/healthz"):
+
+            response = b"Telegram Broadcast Bot is running."
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+
+            self.wfile.write(response)
+
+        else:
+            response = b"Not Found"
+
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+
+            self.wfile.write(response)
+
+    def log_message(self, format, *args):
+        # Avoid noisy HTTP logs
+        return
+
+
+def start_health_server():
+    try:
+        server = ThreadingHTTPServer(
+            (HOST, PORT),
+            HealthHandler
+        )
+
+        logger.info(
+            "🌐 Health server running on %s:%s",
+            HOST,
+            PORT
+        )
+
+        server.serve_forever()
+
+    except Exception as e:
+        logger.error(
+            "Health server error: %s",
+            e,
+            exc_info=True
+        )
+
+
+# ============================================================
 # DATA
 # ============================================================
 
@@ -42,8 +104,13 @@ def load_json(path, default):
         if path.exists():
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
+
     except Exception as e:
-        logger.error("Failed loading %s: %s", path, e)
+        logger.error(
+            "Failed loading %s: %s",
+            path,
+            e
+        )
 
     return default
 
@@ -51,9 +118,19 @@ def load_json(path, default):
 def save_json(path, data):
     try:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            json.dump(
+                data,
+                f,
+                indent=2,
+                ensure_ascii=False
+            )
+
     except Exception as e:
-        logger.error("Failed saving %s: %s", path, e)
+        logger.error(
+            "Failed saving %s: %s",
+            path,
+            e
+        )
 
 
 bot_data = load_json(
@@ -64,7 +141,10 @@ bot_data = load_json(
     }
 )
 
-users = load_json(USERS_FILE, {})
+users = load_json(
+    USERS_FILE,
+    {}
+)
 
 
 # ============================================================
@@ -81,37 +161,28 @@ def is_owner(update: Update) -> bool:
 
 
 async def owner_only(update: Update) -> bool:
+
     if not is_owner(update):
+
         if update.effective_message:
             await update.effective_message.reply_text(
                 "⛔ This command is owner-only."
             )
+
         return False
 
     return True
-
-
-def chat_name(chat):
-    if not chat:
-        return "Unknown"
-
-    if chat.title:
-        return chat.title
-
-    if chat.username:
-        return f"@{chat.username}"
-
-    if chat.first_name:
-        return chat.first_name
-
-    return str(chat.id)
 
 
 # ============================================================
 # USER TRACKING
 # ============================================================
 
-async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def register_user(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     user = update.effective_user
 
     if not user:
@@ -127,9 +198,13 @@ async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "username": user.username or "",
     }
 
-    save_json(USERS_FILE, users)
+    save_json(
+        USERS_FILE,
+        users
+    )
 
     if is_new and OWNER_ID and user.id != OWNER_ID:
+
         username = (
             f"@{user.username}"
             if user.username
@@ -145,13 +220,19 @@ async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
+
             await context.bot.send_message(
                 chat_id=OWNER_ID,
                 text=text,
-                parse_mode="Markdown",
+                parse_mode="Markdown"
             )
+
         except Exception as e:
-            logger.error("Owner notification failed: %s", e)
+
+            logger.error(
+                "Owner notification failed: %s",
+                e
+            )
 
 
 # ============================================================
@@ -162,7 +243,11 @@ async def start_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    await register_user(update, context)
+
+    await register_user(
+        update,
+        context
+    )
 
     await update.effective_message.reply_text(
         "✅ Telegram Broadcast Bot is online.\n\n"
@@ -178,12 +263,13 @@ async def id_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not update.effective_chat:
         return
 
     await update.effective_message.reply_text(
         f"🆔 Chat ID:\n`{update.effective_chat.id}`",
-        parse_mode="Markdown",
+        parse_mode="Markdown"
     )
 
 
@@ -195,6 +281,7 @@ async def help_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     text = (
         "🤖 Telegram Broadcast Bot\n\n"
         "👤 User commands:\n"
@@ -204,6 +291,7 @@ async def help_command(
     )
 
     if is_owner(update):
+
         text += (
             "\n👑 Owner commands:\n"
             "/users - Show registered users\n"
@@ -226,13 +314,16 @@ async def users_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not await owner_only(update):
         return
 
     if not users:
+
         await update.effective_message.reply_text(
             "👥 No users registered yet."
         )
+
         return
 
     lines = [
@@ -240,7 +331,11 @@ async def users_command(
         ""
     ]
 
-    for index, data in enumerate(users.values(), start=1):
+    for index, data in enumerate(
+        users.values(),
+        start=1
+    ):
+
         username = (
             f"@{data.get('username')}"
             if data.get("username")
@@ -253,13 +348,17 @@ async def users_command(
             f"   🔹 {username}"
         )
 
-    # Telegram message size protection
     text = "\n".join(lines)
 
-    for i in range(0, len(text), 3800):
+    for i in range(
+        0,
+        len(text),
+        3800
+    ):
+
         await update.effective_message.reply_text(
             text[i:i + 3800],
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
 
 
@@ -271,30 +370,41 @@ async def addchat_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not await owner_only(update):
         return
 
     if not context.args:
+
         await update.effective_message.reply_text(
             "Usage:\n/addchat CHAT_ID"
         )
+
         return
 
     try:
         chat_id = int(context.args[0])
+
     except ValueError:
+
         await update.effective_message.reply_text(
             "❌ Invalid chat ID."
         )
+
         return
 
     if chat_id not in bot_data["chats"]:
+
         bot_data["chats"].append(chat_id)
-        save_json(DATA_FILE, bot_data)
+
+        save_json(
+            DATA_FILE,
+            bot_data
+        )
 
     await update.effective_message.reply_text(
         f"✅ Chat added:\n`{chat_id}`",
-        parse_mode="Markdown",
+        parse_mode="Markdown"
     )
 
 
@@ -306,31 +416,40 @@ async def removechat_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not await owner_only(update):
         return
 
     if not context.args:
+
         await update.effective_message.reply_text(
             "Usage:\n/removechat CHAT_ID"
         )
+
         return
 
     try:
         chat_id = int(context.args[0])
+
     except ValueError:
+
         await update.effective_message.reply_text(
             "❌ Invalid chat ID."
         )
+
         return
 
     if chat_id in bot_data["chats"]:
         bot_data["chats"].remove(chat_id)
 
-    save_json(DATA_FILE, bot_data)
+    save_json(
+        DATA_FILE,
+        bot_data
+    )
 
     await update.effective_message.reply_text(
         f"✅ Chat removed:\n`{chat_id}`",
-        parse_mode="Markdown",
+        parse_mode="Markdown"
     )
 
 
@@ -342,25 +461,39 @@ async def chats_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not await owner_only(update):
         return
 
-    chats = bot_data.get("chats", [])
+    chats = bot_data.get(
+        "chats",
+        []
+    )
 
     if not chats:
+
         await update.effective_message.reply_text(
             "📭 No target chats configured."
         )
+
         return
 
-    lines = ["📋 Target chats:\n"]
+    lines = [
+        "📋 Target chats:\n"
+    ]
 
-    for index, chat_id in enumerate(chats, start=1):
-        lines.append(f"{index}. `{chat_id}`")
+    for index, chat_id in enumerate(
+        chats,
+        start=1
+    ):
+
+        lines.append(
+            f"{index}. `{chat_id}`"
+        )
 
     await update.effective_message.reply_text(
         "\n".join(lines),
-        parse_mode="Markdown",
+        parse_mode="Markdown"
     )
 
 
@@ -372,34 +505,48 @@ async def setroute_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not await owner_only(update):
         return
 
     if len(context.args) != 2:
+
         await update.effective_message.reply_text(
             "Usage:\n/setroute SOURCE_ID TARGET_ID"
         )
+
         return
 
     try:
+
         source = int(context.args[0])
         target = int(context.args[1])
+
     except ValueError:
+
         await update.effective_message.reply_text(
             "❌ IDs must be numbers."
         )
+
         return
 
-    bot_data.setdefault("routes", {})
+    bot_data.setdefault(
+        "routes",
+        {}
+    )
+
     bot_data["routes"][str(source)] = target
 
-    save_json(DATA_FILE, bot_data)
+    save_json(
+        DATA_FILE,
+        bot_data
+    )
 
     await update.effective_message.reply_text(
         "✅ Route configured.\n\n"
         f"📥 Source: `{source}`\n"
         f"📤 Target: `{target}`",
-        parse_mode="Markdown",
+        parse_mode="Markdown"
     )
 
 
@@ -411,27 +558,36 @@ async def routes_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not await owner_only(update):
         return
 
-    routes = bot_data.get("routes", {})
+    routes = bot_data.get(
+        "routes",
+        {}
+    )
 
     if not routes:
+
         await update.effective_message.reply_text(
             "📭 No routes configured."
         )
+
         return
 
-    lines = ["🔀 Routes:\n"]
+    lines = [
+        "🔀 Routes:\n"
+    ]
 
     for source, target in routes.items():
+
         lines.append(
             f"📥 `{source}` → 📤 `{target}`"
         )
 
     await update.effective_message.reply_text(
         "\n".join(lines),
-        parse_mode="Markdown",
+        parse_mode="Markdown"
     )
 
 
@@ -443,26 +599,39 @@ async def delroute_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     if not await owner_only(update):
         return
 
     if not context.args:
+
         await update.effective_message.reply_text(
             "Usage:\n/delroute SOURCE_ID"
         )
+
         return
 
     source = context.args[0]
 
-    if source in bot_data.get("routes", {}):
+    if source in bot_data.get(
+        "routes",
+        {}
+    ):
+
         del bot_data["routes"][source]
-        save_json(DATA_FILE, bot_data)
+
+        save_json(
+            DATA_FILE,
+            bot_data
+        )
 
         await update.effective_message.reply_text(
             f"✅ Route deleted for `{source}`",
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
+
     else:
+
         await update.effective_message.reply_text(
             "❌ Route not found."
         )
@@ -476,27 +645,37 @@ async def copy_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     message = update.effective_message
     chat = update.effective_chat
 
     if not message or not chat:
         return
 
-    # Register normal users silently
-    await register_user(update, context)
+    await register_user(
+        update,
+        context
+    )
 
     source_id = chat.id
 
     # --------------------------------------------------------
-    # 1. Specific source -> target route
+    # Specific route
     # --------------------------------------------------------
 
-    routes = bot_data.get("routes", {})
+    routes = bot_data.get(
+        "routes",
+        {}
+    )
 
     if str(source_id) in routes:
-        target_id = routes[str(source_id)]
+
+        target_id = routes[
+            str(source_id)
+        ]
 
         try:
+
             await message.copy(
                 chat_id=target_id
             )
@@ -504,49 +683,52 @@ async def copy_message(
             logger.info(
                 "Copied message %s -> %s",
                 source_id,
-                target_id,
+                target_id
             )
 
         except Exception as e:
+
             logger.error(
                 "Route copy failed %s -> %s: %s",
                 source_id,
                 target_id,
-                e,
+                e
             )
 
         return
 
     # --------------------------------------------------------
-    # 2. Owner broadcast
+    # Owner broadcast
     # --------------------------------------------------------
 
     if is_owner(update):
 
-        targets = bot_data.get("chats", [])
+        targets = bot_data.get(
+            "chats",
+            []
+        )
 
         if not targets:
             return
 
         for target_id in targets:
 
-            # Don't copy back to same chat
             if target_id == source_id:
                 continue
 
             try:
+
                 await message.copy(
                     chat_id=target_id
                 )
 
             except Exception as e:
+
                 logger.error(
                     "Broadcast failed to %s: %s",
                     target_id,
-                    e,
+                    e
                 )
-
-        return
 
 
 # ============================================================
@@ -557,10 +739,11 @@ async def error_handler(
     update: object,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     logger.error(
         "Telegram error: %s",
         context.error,
-        exc_info=context.error,
+        exc_info=context.error
     )
 
 
@@ -584,6 +767,8 @@ def main():
     print("🤖 TELEGRAM BROADCAST BOT")
     print("=" * 55)
     print("✅ Bot starting")
+    print("🌐 Render HTTP server: ON")
+    print(f"🌐 Port: {PORT}")
     print("👤 User Tracking: ON")
     print("👥 User Counter: ON")
     print("📢 Broadcast: ON")
@@ -594,6 +779,21 @@ def main():
     print("🎥 Videos: ON")
     print("🎵 Audio/Voice: ON")
     print("=" * 55)
+
+    # --------------------------------------------------------
+    # Start Render HTTP server in background thread
+    # --------------------------------------------------------
+
+    health_thread = threading.Thread(
+        target=start_health_server,
+        daemon=True
+    )
+
+    health_thread.start()
+
+    # --------------------------------------------------------
+    # Telegram Application
+    # --------------------------------------------------------
 
     application = (
         Application.builder()
@@ -606,60 +806,97 @@ def main():
     )
 
     # Commands
-    application.add_handler(
-        CommandHandler("start", start_command)
-    )
 
     application.add_handler(
-        CommandHandler("help", help_command)
-    )
-
-    application.add_handler(
-        CommandHandler("id", id_command)
-    )
-
-    application.add_handler(
-        CommandHandler("users", users_command)
-    )
-
-    application.add_handler(
-        CommandHandler("addchat", addchat_command)
-    )
-
-    application.add_handler(
-        CommandHandler("removechat", removechat_command)
-    )
-
-    application.add_handler(
-        CommandHandler("chats", chats_command)
-    )
-
-    application.add_handler(
-        CommandHandler("setroute", setroute_command)
-    )
-
-    application.add_handler(
-        CommandHandler("routes", routes_command)
-    )
-
-    application.add_handler(
-        CommandHandler("delroute", delroute_command)
-    )
-
-    # All normal messages/media
-    application.add_handler(
-        MessageHandler(
-            filters.ALL & ~filters.COMMAND,
-            copy_message,
+        CommandHandler(
+            "start",
+            start_command
         )
     )
 
-    application.add_error_handler(error_handler)
+    application.add_handler(
+        CommandHandler(
+            "help",
+            help_command
+        )
+    )
 
+    application.add_handler(
+        CommandHandler(
+            "id",
+            id_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "users",
+            users_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "addchat",
+            addchat_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "removechat",
+            removechat_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "chats",
+            chats_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "setroute",
+            setroute_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "routes",
+            routes_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "delroute",
+            delroute_command
+        )
+    )
+
+    # All normal messages/media
+
+    application.add_handler(
+        MessageHandler(
+            filters.ALL & ~filters.COMMAND,
+            copy_message
+        )
+    )
+
+    application.add_error_handler(
+        error_handler
+    )
+
+    # --------------------------------------------------------
     # Telegram long polling
+    # --------------------------------------------------------
+
     application.run_polling(
         drop_pending_updates=False,
-        allowed_updates=Update.ALL_TYPES,
+        allowed_updates=Update.ALL_TYPES
     )
 
 
