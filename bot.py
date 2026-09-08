@@ -15,21 +15,14 @@ from telegram.request import HTTPXRequest
 
 # ============================================================
 # BOT TOKEN
-# ============================================================
+# ==========================================================
+import os
+from dotenv import load_dotenv
 
-BOT_TOKEN = "8918330499:AAHLxC4IdJ3uAlUvUD73y19gUSe9Nzt_riQ"
+load_dotenv()
 
-
-# ============================================================
-# OWNER ID
-# ============================================================
-# Apna Telegram numeric User ID yahan daalo.
-# Example:
-# OWNER_ID = 123456789
-# ============================================================
-
-OWNER_ID = 8221567311
-
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
 # ============================================================
 # DATABASE FILES
