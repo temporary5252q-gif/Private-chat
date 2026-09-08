@@ -2,11 +2,14 @@ import json
 import logging
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 from telegram import Update
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -24,12 +27,17 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
-# Render provides PORT automatically.
+# Render automatically provides PORT
 PORT = int(os.getenv("PORT", "10000"))
 HOST = "0.0.0.0"
 
 DATA_FILE = Path("bot_data.json")
 USERS_FILE = Path("users.json")
+
+
+# ============================================================
+# LOGGING
+# ============================================================
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -46,68 +54,98 @@ logger = logging.getLogger(__name__)
 class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+
         if self.path in ("/", "/health", "/healthz"):
 
             response = b"Telegram Broadcast Bot is running."
 
             self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.send_header("Content-Length", str(len(response)))
+            self.send_header(
+                "Content-Type",
+                "text/plain; charset=utf-8"
+            )
+            self.send_header(
+                "Content-Length",
+                str(len(response))
+            )
             self.end_headers()
 
             self.wfile.write(response)
 
         else:
+
             response = b"Not Found"
 
             self.send_response(404)
-            self.send_header("Content-Type", "text/plain")
-            self.send_header("Content-Length", str(len(response)))
+            self.send_header(
+                "Content-Type",
+                "text/plain; charset=utf-8"
+            )
+            self.send_header(
+                "Content-Length",
+                str(len(response))
+            )
             self.end_headers()
 
             self.wfile.write(response)
 
     def log_message(self, format, *args):
-        # Avoid noisy HTTP logs
+        # Disable HTTP access logs
         return
 
 
 def start_health_server():
-    try:
-        server = ThreadingHTTPServer(
-            (HOST, PORT),
-            HealthHandler
-        )
 
-        logger.info(
-            "🌐 Health server running on %s:%s",
-            HOST,
-            PORT
-        )
+    while True:
 
-        server.serve_forever()
+        try:
 
-    except Exception as e:
-        logger.error(
-            "Health server error: %s",
-            e,
-            exc_info=True
-        )
+            server = ThreadingHTTPServer(
+                (HOST, PORT),
+                HealthHandler
+            )
+
+            logger.info(
+                "🌐 HTTP health server running on %s:%s",
+                HOST,
+                PORT
+            )
+
+            server.serve_forever()
+
+        except Exception as e:
+
+            logger.error(
+                "❌ Health server error: %s",
+                e,
+                exc_info=True
+            )
+
+            time.sleep(5)
 
 
 # ============================================================
-# DATA
+# JSON STORAGE
 # ============================================================
 
 def load_json(path, default):
+
     try:
+
         if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
+
+            with open(
+                path,
+                "r",
+                encoding="utf-8"
+            ) as f:
+
                 return json.load(f)
 
     except Exception as e:
+
         logger.error(
-            "Failed loading %s: %s",
+            "❌ Failed loading %s: %s",
             path,
             e
         )
@@ -116,8 +154,17 @@ def load_json(path, default):
 
 
 def save_json(path, data):
+
     try:
-        with open(path, "w", encoding="utf-8") as f:
+
+        temp_path = Path(str(path) + ".tmp")
+
+        with open(
+            temp_path,
+            "w",
+            encoding="utf-8"
+        ) as f:
+
             json.dump(
                 data,
                 f,
@@ -125,13 +172,20 @@ def save_json(path, data):
                 ensure_ascii=False
             )
 
+        temp_path.replace(path)
+
     except Exception as e:
+
         logger.error(
-            "Failed saving %s: %s",
+            "❌ Failed saving %s: %s",
             path,
             e
         )
 
+
+# ============================================================
+# DATA
+# ============================================================
 
 bot_data = load_json(
     DATA_FILE,
@@ -151,7 +205,8 @@ users = load_json(
 # HELPERS
 # ============================================================
 
-def is_owner(update: Update) -> bool:
+def is_owner(update: Update):
+
     user = update.effective_user
 
     if not user:
@@ -160,11 +215,12 @@ def is_owner(update: Update) -> bool:
     return user.id == OWNER_ID
 
 
-async def owner_only(update: Update) -> bool:
+async def owner_only(update: Update):
 
     if not is_owner(update):
 
         if update.effective_message:
+
             await update.effective_message.reply_text(
                 "⛔ This command is owner-only."
             )
@@ -203,6 +259,7 @@ async def register_user(
         users
     )
 
+    # Notify owner only for genuinely new users
     if is_new and OWNER_ID and user.id != OWNER_ID:
 
         username = (
@@ -230,7 +287,7 @@ async def register_user(
         except Exception as e:
 
             logger.error(
-                "Owner notification failed: %s",
+                "❌ Owner notification failed: %s",
                 e
             )
 
@@ -249,10 +306,12 @@ async def start_command(
         context
     )
 
-    await update.effective_message.reply_text(
-        "✅ Telegram Broadcast Bot is online.\n\n"
-        "Use /help to see available commands."
-    )
+    if update.effective_message:
+
+        await update.effective_message.reply_text(
+            "✅ Telegram Broadcast Bot is online.\n\n"
+            "Use /help to see available commands."
+        )
 
 
 # ============================================================
@@ -350,6 +409,7 @@ async def users_command(
 
     text = "\n".join(lines)
 
+    # Telegram message size protection
     for i in range(
         0,
         len(text),
@@ -383,6 +443,7 @@ async def addchat_command(
         return
 
     try:
+
         chat_id = int(context.args[0])
 
     except ValueError:
@@ -429,6 +490,7 @@ async def removechat_command(
         return
 
     try:
+
         chat_id = int(context.args[0])
 
     except ValueError:
@@ -440,6 +502,7 @@ async def removechat_command(
         return
 
     if chat_id in bot_data["chats"]:
+
         bot_data["chats"].remove(chat_id)
 
     save_json(
@@ -613,12 +676,14 @@ async def delroute_command(
 
     source = context.args[0]
 
-    if source in bot_data.get(
+    routes = bot_data.get(
         "routes",
         {}
-    ):
+    )
 
-        del bot_data["routes"][source]
+    if source in routes:
+
+        del routes[source]
 
         save_json(
             DATA_FILE,
@@ -652,6 +717,7 @@ async def copy_message(
     if not message or not chat:
         return
 
+    # Track users
     await register_user(
         update,
         context
@@ -659,9 +725,9 @@ async def copy_message(
 
     source_id = chat.id
 
-    # --------------------------------------------------------
-    # Specific route
-    # --------------------------------------------------------
+    # ========================================================
+    # SOURCE -> SPECIFIC TARGET ROUTE
+    # ========================================================
 
     routes = bot_data.get(
         "routes",
@@ -681,7 +747,7 @@ async def copy_message(
             )
 
             logger.info(
-                "Copied message %s -> %s",
+                "📤 Route copied: %s -> %s",
                 source_id,
                 target_id
             )
@@ -689,7 +755,7 @@ async def copy_message(
         except Exception as e:
 
             logger.error(
-                "Route copy failed %s -> %s: %s",
+                "❌ Route copy failed %s -> %s: %s",
                 source_id,
                 target_id,
                 e
@@ -697,9 +763,9 @@ async def copy_message(
 
         return
 
-    # --------------------------------------------------------
-    # Owner broadcast
-    # --------------------------------------------------------
+    # ========================================================
+    # OWNER BROADCAST
+    # ========================================================
 
     if is_owner(update):
 
@@ -722,10 +788,16 @@ async def copy_message(
                     chat_id=target_id
                 )
 
+                logger.info(
+                    "📢 Broadcast: %s -> %s",
+                    source_id,
+                    target_id
+                )
+
             except Exception as e:
 
                 logger.error(
-                    "Broadcast failed to %s: %s",
+                    "❌ Broadcast failed to %s: %s",
                     target_id,
                     e
                 )
@@ -740,72 +812,54 @@ async def error_handler(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    error = context.error
+
+    if isinstance(error, TimedOut):
+
+        logger.warning(
+            "⚠️ Telegram request timed out."
+        )
+
+        return
+
+    if isinstance(error, NetworkError):
+
+        logger.warning(
+            "⚠️ Telegram network error: %s",
+            error
+        )
+
+        return
+
     logger.error(
-        "Telegram error: %s",
-        context.error,
-        exc_info=context.error
+        "❌ Telegram error: %s",
+        error,
+        exc_info=error
     )
 
 
 # ============================================================
-# MAIN
+# CREATE APPLICATION
 # ============================================================
 
-def main():
-
-    if not BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN environment variable is missing."
-        )
-
-    if not OWNER_ID:
-        raise RuntimeError(
-            "OWNER_ID environment variable is missing."
-        )
-
-    print("=" * 55)
-    print("🤖 TELEGRAM BROADCAST BOT")
-    print("=" * 55)
-    print("✅ Bot starting")
-    print("🌐 Render HTTP server: ON")
-    print(f"🌐 Port: {PORT}")
-    print("👤 User Tracking: ON")
-    print("👥 User Counter: ON")
-    print("📢 Broadcast: ON")
-    print("🔀 Source → Target: ON")
-    print("📝 Text: ON")
-    print("📁 Files: ON")
-    print("📷 Photos: ON")
-    print("🎥 Videos: ON")
-    print("🎵 Audio/Voice: ON")
-    print("=" * 55)
-
-    # --------------------------------------------------------
-    # Start Render HTTP server in background thread
-    # --------------------------------------------------------
-
-    health_thread = threading.Thread(
-        target=start_health_server,
-        daemon=True
-    )
-
-    health_thread.start()
-
-    # --------------------------------------------------------
-    # Telegram Application
-    # --------------------------------------------------------
+def create_application():
 
     application = (
         Application.builder()
         .token(BOT_TOKEN)
-        .get_updates_connect_timeout(30)
-        .get_updates_read_timeout(30)
-        .get_updates_write_timeout(30)
-        .get_updates_pool_timeout(30)
+
+        # Telegram API timeouts
+        .get_updates_connect_timeout(60)
+        .get_updates_read_timeout(90)
+        .get_updates_write_timeout(60)
+        .get_updates_pool_timeout(60)
+
         .build()
     )
 
-    # Commands
+    # ========================================================
+    # COMMANDS
+    # ========================================================
 
     application.add_handler(
         CommandHandler(
@@ -877,7 +931,9 @@ def main():
         )
     )
 
-    # All normal messages/media
+    # ========================================================
+    # ALL MESSAGE TYPES
+    # ========================================================
 
     application.add_handler(
         MessageHandler(
@@ -890,15 +946,149 @@ def main():
         error_handler
     )
 
-    # --------------------------------------------------------
-    # Telegram long polling
-    # --------------------------------------------------------
+    return application
 
-    application.run_polling(
-        drop_pending_updates=False,
-        allowed_updates=Update.ALL_TYPES
+
+# ============================================================
+# TELEGRAM BOT WITH AUTO RECONNECT
+# ============================================================
+
+def run_telegram_bot():
+
+    while True:
+
+        application = None
+
+        try:
+
+            print("")
+            print("🚀 Starting Telegram polling...")
+
+            application = create_application()
+
+            application.run_polling(
+                drop_pending_updates=False,
+                allowed_updates=Update.ALL_TYPES,
+                close_loop=False
+            )
+
+            print(
+                "⚠️ Telegram polling stopped."
+            )
+
+            print(
+                "🔄 Restarting in 5 seconds..."
+            )
+
+            time.sleep(5)
+
+        except TimedOut as e:
+
+            print(
+                f"⚠️ Telegram timeout: {e}"
+            )
+
+            print(
+                "🔄 Reconnecting in 5 seconds..."
+            )
+
+            time.sleep(5)
+
+        except NetworkError as e:
+
+            print(
+                f"⚠️ Telegram network error: {e}"
+            )
+
+            print(
+                "🔄 Reconnecting in 5 seconds..."
+            )
+
+            time.sleep(5)
+
+        except Exception as e:
+
+            logger.error(
+                "❌ Unexpected bot error: %s",
+                e,
+                exc_info=True
+            )
+
+            print(
+                "🔄 Restarting bot in 10 seconds..."
+            )
+
+            time.sleep(10)
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    # ========================================================
+    # ENV CHECK
+    # ========================================================
+
+    if not BOT_TOKEN:
+
+        raise RuntimeError(
+            "BOT_TOKEN environment variable is missing."
+        )
+
+    if not OWNER_ID:
+
+        raise RuntimeError(
+            "OWNER_ID environment variable is missing."
+        )
+
+    # ========================================================
+    # STARTUP LOG
+    # ========================================================
+
+    print("")
+    print("=" * 60)
+    print("🤖 TELEGRAM BROADCAST BOT")
+    print("=" * 60)
+    print("✅ Bot starting")
+    print("🌐 Render HTTP server: ON")
+    print(f"🌐 Host: {HOST}")
+    print(f"🌐 Port: {PORT}")
+    print("👤 User Tracking: ON")
+    print("👥 User Counter: ON")
+    print("📢 Broadcast: ON")
+    print("🔀 Source → Target: ON")
+    print("📝 Text: ON")
+    print("📁 Files: ON")
+    print("📷 Photos: ON")
+    print("🎥 Videos: ON")
+    print("🎵 Audio/Voice: ON")
+    print("🔄 Auto Reconnect: ON")
+    print("=" * 60)
+    print("")
+
+    # ========================================================
+    # START RENDER HEALTH SERVER
+    # ========================================================
+
+    health_thread = threading.Thread(
+        target=start_health_server,
+        daemon=True
     )
 
+    health_thread.start()
+
+    # ========================================================
+    # START TELEGRAM BOT
+    # ========================================================
+
+    run_telegram_bot()
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
     main()
